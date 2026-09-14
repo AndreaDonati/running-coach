@@ -1,0 +1,7 @@
+# Dipendenze della pipeline. Python 3.9 o superiore.
+#
+# requests e python-dotenv erano elencate ma non importate da nessuno script:
+# il download usa `curl` tramite subprocess, non requests. Rimosse.
+
+fitparse>=1.2.0    # lettura dei file .fit Garmin
+pytest>=7.0        # solo per pipeline/tests/

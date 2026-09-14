@@ -1,0 +1,33 @@
+# Modello per pipeline/curl.txt (quel file e' escluso da git: contiene i tuoi
+# cookie di sessione Garmin).
+#
+# Come si ottiene, su connect.garmin.com con la sessione aperta:
+#
+#   1. DevTools -> Network
+#   2. apri la lista attivita', trova la richiesta a
+#      activitylist-service/activities/search/activities
+#      -> tasto destro -> Copy -> Copy as cURL
+#   3. scarica UNA attivita' in .fit, trova la richiesta a
+#      download-service/files/activity/<id>
+#      -> Copy as cURL
+#   4. incolla i due comandi in pipeline/curl.txt, in quest'ordine,
+#      separati da una riga vuota
+#
+# Lo script riscrive da se' i parametri `limit` e `start` del primo comando per
+# paginare, e l'`<id>` nell'URL del secondo per ogni attivita' da scaricare.
+#
+# I cookie scadono: quando il download fallisce con "session expired", si
+# rifanno i passi 1-4. Le attivita' gia' scaricate vengono saltate, quindi
+# rilanciare non ricomincia da capo.
+
+curl 'https://connect.garmin.com/gc-api/activitylist-service/activities/search/activities?limit=20&start=0' \
+  -H 'accept: */*' \
+  -H 'authorization: Bearer <TOKEN>' \
+  -H 'connect-csrf-token: <CSRF>' \
+  -H 'di-backend: connectapi.garmin.com' \
+  -b '<COOKIE HEADER COMPLETO>'
+
+curl 'https://connect.garmin.com/download-service/files/activity/0000000000' \
+  -H 'accept: */*' \
+  -H 'authorization: Bearer <TOKEN>' \
+  -b '<COOKIE HEADER COMPLETO>'

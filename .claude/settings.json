@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./pipeline/setup_venv.sh)",
+      "Bash(pipeline/.venv/bin/python pipeline/run_pipeline.py:*)",
+      "Bash(pipeline/.venv/bin/python pipeline/batch_convert.py:*)",
+      "Bash(pipeline/.venv/bin/python pipeline/quarter_split.py:*)",
+      "Bash(pipeline/.venv/bin/python pipeline/download_garmin.py:* --dry-run)"
+    ]
+  }
+}

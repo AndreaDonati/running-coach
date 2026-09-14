@@ -1,0 +1,42 @@
+# --- Segreti -----------------------------------------------------------------
+# curl.txt contiene i cookie di sessione e il CSRF token Garmin in chiaro.
+# Vedi pipeline/curl.txt.example per il formato.
+curl.txt
+.env
+
+# --- Ambienti Python ---------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+
+# --- Dati degli atleti -------------------------------------------------------
+# NIENTE dato personale in git. Il repository contiene il sistema (pipeline,
+# coach, template); i dati di chi lo usa restano sul proprio disco.
+#
+# Escluso: .fit grezzi, riassunti delle attivita', file trimestrali, profilo,
+# piani settimanali. Tracciato: solo athletes/README.md e athletes/_template/.
+#
+# Se vuoi versionare i TUOI dati, vedi athletes/README.md, sezione
+# "Versionare i propri dati".
+athletes/*
+!athletes/README.md
+!athletes/_template/
+!athletes/_template/**
+
+*.fit
+# fixture dei test: unico .fit versionato
+!pipeline/tests/sample_activity.fit
+*.textClipping
+
+# --- Intermedi del converter -------------------------------------------------
+# fit_to_json.py produce un .json con la timeseries completa (~450 MB in totale)
+# accanto al .md che e' l'unico file letto a valle. Il .json non si versiona.
+**/activities/*.json
+
+# --- Output di esecuzione ----------------------------------------------------
+pipeline/logs/
+
+BACKLOG.md
+
+# --- macOS -------------------------------------------------------------------
+.DS_Store
