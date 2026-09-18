@@ -951,3 +951,105 @@ def test_le_zone_avvisano_se_la_fc_e_inaffidabile():
     # non verificato: avvisa comunque, ma dicendo che il test non e stato fatto
     ignoto = weekly_rollup.render("tizio", att, fc_max=190, fc_polso_ok=None)
     assert "Non è stato verificato" in ignoto
+
+
+# --- frequenza cardiaca sostenuta e ancoraggi delle zone --------------------
+
+def _traccia_hr(valori, inizio=None, passo_s=1, cadenza=None):
+    """Traccia sintetica: una FC al secondo, opzionalmente con la cadenza."""
+    from datetime import datetime, timedelta
+    t0 = inizio or datetime(2026, 1, 1, 8, 0, 0)
+    return [{"ts": t0 + timedelta(seconds=i * passo_s), "heart_rate": hr,
+             "cadence": (cadenza[i] if isinstance(cadenza, list) else cadenza)}
+            for i, hr in enumerate(valori)]
+
+
+def test_la_media_sostenuta_trova_il_tratto_migliore():
+    """Dieci minuti a 150 seguiti da dieci a 180: la finestra da dieci minuti
+    deve valere 180, quella da venti la media delle due."""
+    import activity_metrics
+    ts = _traccia_hr([150] * 600 + [180] * 600)
+    out = activity_metrics.massimi_sostenuti(ts, (600, 1200))
+    assert 179 <= out[600] <= 180, out
+    assert 164 <= out[1200] <= 166, out
+
+
+def test_la_finestra_non_scavalca_le_pause():
+    """Due tratti da sei minuti separati da mezz'ora di pausa non fanno dodici
+    minuti: la media su dieci minuti non deve esistere."""
+    import activity_metrics
+    from datetime import datetime
+    a = _traccia_hr([170] * 360)
+    b = _traccia_hr([170] * 360, inizio=datetime(2026, 1, 1, 8, 36, 0))
+    out = activity_metrics.massimi_sostenuti(a + b, (300, 600))
+    assert out[300] == 170
+    assert out[600] is None, "la finestra ha attraversato la pausa"
+
+
+def test_il_campionamento_rado_non_cambia_la_finestra():
+    """Un campione ogni cinque secondi copre gli stessi minuti di uno al
+    secondo: e' il motivo per cui la serie viene ricampionata."""
+    import activity_metrics
+    fitto = _traccia_hr([175] * 601)
+    rado = _traccia_hr([175] * 121, passo_s=5)
+    assert activity_metrics.massimi_sostenuti(fitto, (600,))[600] == 175
+    assert activity_metrics.massimi_sostenuti(rado, (600,))[600] == 175
+
+
+def test_la_fcmax_pulita_scarta_il_picco_che_segue_la_cadenza():
+    """Un minuto a 190 bpm con i passi a 190 spm puo' essere cadence lock, non
+    un battito. Lo stesso valore con la cadenza lontana e' uno sforzo vero."""
+    import activity_metrics
+    facile = [60] * 300                                    # 120 spm
+    sospetto = _traccia_hr([150] * 300 + [190] * 60, cadenza=facile + [95] * 60)
+    assert activity_metrics.fcmax_pulita(sospetto) == 150   # 190 bpm con 190 spm
+
+    vero = _traccia_hr([150] * 300 + [190] * 60, cadenza=facile + [75] * 60)
+    assert activity_metrics.fcmax_pulita(vero) == 190       # 190 bpm con 150 spm
+
+
+def test_la_fcmax_pulita_ignora_il_picco_isolato():
+    """Cinque secondi a 210 sono un artefatto, non una frequenza tenuta."""
+    import activity_metrics
+    ts = _traccia_hr([160] * 300 + [210] * 5 + [160] * 300, cadenza=65)
+    assert activity_metrics.fcmax_pulita(ts) == 160
+
+
+def test_la_fcmax_pulita_scarta_i_campioni_senza_cadenza():
+    """Senza cadenza il lock non si esclude: il campione non vale."""
+    import activity_metrics
+    ts = _traccia_hr([195] * 300, cadenza=None)
+    assert activity_metrics.fcmax_pulita(ts) is None
+
+
+def test_il_confine_si_ricava_dal_tempo_passato_sopra():
+    """Data una distribuzione e i secondi che un servizio esterno attribuisce a
+    una zona, il confine e' il battito che riproduce quel tempo."""
+    import activity_metrics
+    ts = _traccia_hr([150] * 600 + [175] * 600)   # 600 s sopra 150
+    isto = activity_metrics.istogramma_hr(ts)
+    bpm, scarto = activity_metrics.confine_da_tempo_sopra(isto, 600)
+    assert 151 <= bpm <= 175, bpm
+    assert scarto == 0
+    # Chiedendo tutto il tempo, il confine scende sotto il valore piu' basso.
+    bpm, _ = activity_metrics.confine_da_tempo_sopra(isto, 1200)
+    assert bpm <= 150, bpm
+
+
+def test_le_tre_scale_ancorano_a_numeri_diversi():
+    """Stesso atleta, tre convenzioni: i confini non coincidono, ed e' il
+    motivo per cui il piano e l'orologio danno zone diverse."""
+    import profile_stats
+    fcmax = profile_stats.scala_fcmax(200)
+    riserva = profile_stats.scala_riserva(200, 50)
+    soglia = profile_stats.scala_soglia(180)
+
+    def inizio(scala, zona):
+        return next(lo for nome, lo, _, _ in scala if nome == zona)
+
+    assert inizio(fcmax, "Z2") == 144          # 72% di 200
+    assert inizio(riserva, "Z2") == 140        # 50 + 60% di 150
+    assert inizio(soglia, "Z2") == 146         # 81% di 180
+    # La zona piu' alta non ha tetto in nessuna delle tre.
+    for scala in (fcmax, riserva, soglia):
+        assert scala[-1][2] is None

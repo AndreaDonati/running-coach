@@ -47,6 +47,57 @@ ZONE = [
     ("Z5", 0.92, 9.99, "VO2max"),
 ]
 
+# Le altre due convenzioni con cui si tracciano le stesse cinque zone. Cambia
+# l'ancora: la riserva cardiaca (FC massima meno FC a riposo) invece della sola
+# FC massima, o la frequenza alla soglia anaerobica.
+#
+# Non sono equivalenti e non e' un dettaglio: sullo stesso atleta il confine
+# fra fondo e medio puo' spostarsi di dieci battiti a seconda di quale si usa.
+# Stanno qui tutte e tre perche' l'orologio ne usa una e il piano un'altra, e
+# il confronto e' l'unico modo di accorgersi che si sta parlando di due cose
+# diverse chiamandole "Z2". Le confronta `hr_estimate.py`.
+
+# Frazioni di riserva cardiaca, convenzione Karvonen (e predefinita Garmin).
+ZONE_RISERVA = [
+    ("Z1", 0.50, 0.60, "recupero"),
+    ("Z2", 0.60, 0.70, "fondo aerobico"),
+    ("Z3", 0.70, 0.80, "medio"),
+    ("Z4", 0.80, 0.90, "soglia"),
+    ("Z5", 0.90, 9.99, "VO2max"),
+]
+
+# Frazioni della FC alla soglia, convenzione Friel per la corsa, accorpata a
+# cinque zone: le sue Z5a/Z5b/Z5c diventano una sola Z5.
+ZONE_SOGLIA = [
+    ("Z1", 0.00, 0.81, "recupero"),
+    ("Z2", 0.81, 0.90, "fondo aerobico"),
+    ("Z3", 0.90, 0.94, "medio"),
+    ("Z4", 0.94, 1.00, "soglia"),
+    ("Z5", 1.00, 9.99, "VO2max"),
+]
+
+
+def _in_bpm(zone: list, ampiezza: float, base: float = 0.0) -> list:
+    """Da frazioni a battiti. `None` come estremo alto significa 'senza tetto'."""
+    return [(nome, round(base + lo * ampiezza),
+             None if hi > 9 else round(base + hi * ampiezza), desc)
+            for nome, lo, hi, desc in zone]
+
+
+def scala_fcmax(fc_max: int) -> list:
+    """Zone in bpm come percentuale della FC massima. E' quella che usa il repo."""
+    return _in_bpm(ZONE, fc_max)
+
+
+def scala_riserva(fc_max: int, fc_riposo: int) -> list:
+    """Zone in bpm come percentuale della riserva cardiaca (Karvonen)."""
+    return _in_bpm(ZONE_RISERVA, fc_max - fc_riposo, fc_riposo)
+
+
+def scala_soglia(lthr: int) -> list:
+    """Zone in bpm come percentuale della FC alla soglia."""
+    return _in_bpm(ZONE_SOGLIA, lthr)
+
 FC_MAX_RE = re.compile(
     r"^(?:[-*]\s*)?\*\*(?:FC massima|FCmax|Max HR|Frequenza cardiaca massima)\*\*:?\s*"
     r"([0-9]{2,3})\b", re.I | re.M)
