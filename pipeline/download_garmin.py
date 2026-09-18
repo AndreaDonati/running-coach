@@ -45,11 +45,60 @@ import paths  # noqa: E402
 ZIP_MAGIC = b"PK\x03\x04"
 
 
-def find_curl_file() -> Path:
-    curl_file = SCRIPT_DIR / "curl.txt"
-    if not curl_file.exists():
-        raise FileNotFoundError(f"curl.txt not found at {curl_file}")
-    return curl_file
+GUID_RE = re.compile(r"GARMIN-SSO-CUST-GUID=([0-9a-fA-F-]{36})")
+
+
+def find_curl_file(person: str) -> Path:
+    f = paths.curl_file(person)
+    if not f.exists():
+        raise SystemExit(
+            f"❌ {f.name} non esiste in {SCRIPT_DIR}.\n"
+            f"Esporta i due comandi cURL con la sessione Garmin di '{person}' aperta "
+            f"e rilancia:\n"
+            f"  pipeline/run_pipeline.py {person} --curl-from-clipboard"
+        )
+    return f
+
+
+def check_account(person: str, curl_text: str) -> None:
+    """Che la sessione nel cURL sia dell'account di questo atleta.
+
+    Il cookie `GARMIN-SSO-CUST-GUID` identifica l'account. La prima volta lo si
+    registra in `athletes/<atleta>/.garmin_guid`, dopo lo si confronta: senza
+    questo controllo una sessione dell'atleta sbagliato scarica le sue attivita'
+    nella cartella di questo, e l'unico modo di accorgersene sono le date.
+
+    Se il cURL non contiene il cookie non si blocca nulla: e' un controllo in
+    piu', non un requisito del formato.
+    """
+    m = GUID_RE.search(curl_text)
+    if not m:
+        print("⚠️  Nessun GARMIN-SSO-CUST-GUID nel cURL: controllo account saltato.")
+        return
+    visto = m.group(1).lower()
+    memo = paths.garmin_guid_file(person)
+    if not memo.exists():
+        memo.write_text(visto + "\n")
+        print(f"🔒 Account Garmin di '{person}' registrato ({visto[:8]}…).")
+        return
+    atteso = memo.read_text().strip().lower()
+    if visto == atteso:
+        return
+
+    altri = [a for a in paths.known_athletes()
+             if a != person
+             and paths.garmin_guid_file(a).exists()
+             and paths.garmin_guid_file(a).read_text().strip().lower() == visto]
+    di_chi = f" Sembra la sessione di '{altri[0]}'." if altri else ""
+    raise SystemExit(
+        f"❌ Il cURL e' di un altro account Garmin.{di_chi}\n"
+        f"   atteso per '{person}': {atteso}\n"
+        f"   trovato nel cURL:     {visto}\n"
+        f"Scaricare adesso metterebbe le attivita' di un atleta nella cartella\n"
+        f"di un altro. Esporta i cURL con la sessione di '{person}' aperta.\n"
+        f"Se l'account di '{person}' e' cambiato davvero, cancella\n"
+        f"{paths.garmin_guid_file(person)} e rilancia."
+    )
 
 
 def load_curls(curl_file: Path) -> Tuple[str, str]:
@@ -214,7 +263,8 @@ def main() -> int:
         print("🔧 Repair mode — unzipping existing files...")
         return repair_zips(activity_dir)
 
-    curl_file = find_curl_file()
+    curl_file = find_curl_file(person)
+    check_account(person, curl_file.read_text())
     list_curl, download_curl = load_curls(curl_file)
 
     try:

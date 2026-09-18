@@ -1,7 +1,11 @@
 # --- Segreti -----------------------------------------------------------------
-# curl.txt contiene i cookie di sessione e il CSRF token Garmin in chiaro.
+# curl.txt e curl_<atleta>.txt contengono i cookie di sessione e il CSRF token
+# Garmin in chiaro. Uno per atleta: i cookie appartengono a un account.
 # Vedi pipeline/curl.txt.example per il formato.
 curl.txt
+curl_*.txt
+# L'account Garmin a cui e' legato un atleta (vedi download_garmin.check_account).
+.garmin_guid
 .env
 
 # --- Ambienti Python ---------------------------------------------------------
