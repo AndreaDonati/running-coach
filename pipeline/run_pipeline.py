@@ -7,7 +7,8 @@
 
 I comandi cURL per il download si esportano dal browser con la sessione
 Garmin aperta (vedi `pipeline/curl.txt.example`); `--curl-from-clipboard` li
-prende dagli appunti e aggiorna `curl.txt` da solo. L'ordine non conta: lo
+prende dagli appunti e aggiorna `curl_<atleta>.txt` da solo — uno per atleta,
+perche' i cookie appartengono a un account. L'ordine non conta: lo
 script riconosce dall'URL quale e' l'elenco e quale il download.
 
 Esempi:
@@ -40,7 +41,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import paths  # noqa: E402
 
 PIPELINE = Path(__file__).resolve().parent
-CURL_FILE = PIPELINE / "curl.txt"
 
 LIST_URL = "activitylist-service"
 DOWNLOAD_URL = "download-service"
@@ -108,24 +108,34 @@ def split_curls(text: str) -> tuple[str, str]:
     return listing, download
 
 
-def write_curl_file(listing: str, download: str) -> None:
-    CURL_FILE.write_text(f"{listing}\n\n{download}\n")
-    print(f"✓ Aggiornato {CURL_FILE.relative_to(paths.REPO_ROOT)}")
+def write_curl_file(person: str, listing: str, download: str) -> None:
+    """Scrive i cookie nel file di questo atleta, non in uno condiviso.
+
+    Se si stava ancora usando il vecchio `curl.txt` condiviso, da qui in avanti
+    si scrive su `curl_<atleta>.txt`: i cookie sono di un account, e un file
+    solo per due atleti significa che ogni sync cancella la sessione dell'altro.
+    """
+    f = PIPELINE / f"curl_{person.strip().lower()}.txt"
+    f.write_text(f"{listing}\n\n{download}\n")
+    f.chmod(0o600)
+    print(f"✓ Aggiornato {f.relative_to(paths.REPO_ROOT)}")
 
 
-def check_curl_freshness() -> None:
-    """Avviso se curl.txt e' vecchio: i cookie Garmin scadono in poche ore."""
-    if not CURL_FILE.exists():
+def check_curl_freshness(person: str) -> None:
+    """Avviso se i cookie sono vecchi: quelli di Garmin scadono in poche ore."""
+    f = paths.curl_file(person)
+    if not f.exists():
         raise SystemExit(
-            f"{CURL_FILE.relative_to(paths.REPO_ROOT)} non esiste.\n"
-            f"Esporta i due comandi cURL dal browser e rilancia con "
-            f"--curl-from-clipboard (vedi pipeline/curl.txt.example)."
+            f"{f.relative_to(paths.REPO_ROOT)} non esiste.\n"
+            f"Esporta i due comandi cURL con la sessione Garmin di '{person}' "
+            f"aperta e rilancia con --curl-from-clipboard "
+            f"(vedi pipeline/curl.txt.example)."
         )
     import time
 
-    age_h = (time.time() - CURL_FILE.stat().st_mtime) / 3600
+    age_h = (time.time() - f.stat().st_mtime) / 3600
     if age_h > 6:
-        print(f"⚠️  curl.txt ha {age_h:.0f} ore: i cookie sono probabilmente scaduti.")
+        print(f"⚠️  {f.name} ha {age_h:.0f} ore: i cookie sono probabilmente scaduti.")
         print("   Se il download fallisce, riesportali e rilancia con --curl-from-clipboard.")
 
 
@@ -152,12 +162,12 @@ def main() -> int:
     fonte = parser.add_mutually_exclusive_group()
     fonte.add_argument("--curl-from-clipboard", action="store_true",
                        help="Prende i due comandi cURL dagli appunti, aggiorna "
-                            "curl.txt e scarica")
+                            "curl_<atleta>.txt e scarica")
     fonte.add_argument("--curl-file",
                        help="Come sopra, leggendo i due cURL da un file")
     parser.add_argument("--download", action="store_true",
                         help="Scarica da Garmin i .fit non ancora presenti, "
-                             "riusando il curl.txt esistente")
+                             "riusando i cookie gia' salvati per l'atleta")
     parser.add_argument("--recreate", action="store_true",
                         help="Cancella i riassunti gia' convertiti e li rigenera tutti")
     parser.add_argument("--workers", type=int, default=4,
@@ -191,11 +201,11 @@ def main() -> int:
     if da_appunti:
         testo = (read_clipboard() if args.curl_from_clipboard
                  else Path(args.curl_file).read_text())
-        write_curl_file(*split_curls(testo))
+        write_curl_file(person, *split_curls(testo))
 
     scarica = args.download or da_appunti
     if scarica:
-        check_curl_freshness()
+        check_curl_freshness(person)
         prima = len(list(sorgente.glob("*.fit")))
         if run_cmd([sys.executable, str(PIPELINE / "download_garmin.py"), person],
                    dry_run=args.dry_run) != 0:

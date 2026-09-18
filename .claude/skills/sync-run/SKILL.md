@@ -15,7 +15,7 @@ Input: `$ARGUMENTS` — il nome dell'atleta (es. andrea, giorgia)
 3. Eseguila. Comprende anche `coach/workflows/log-workout.md` come ultimo
    passo.
 
-**Non stampare mai il contenuto di `pipeline/curl.txt`**: contiene i cookie di
-sessione dell'account Garmin dell'utente.
+**Non stampare mai il contenuto di `pipeline/curl_<atleta>.txt`**: contiene i
+cookie di sessione dell'account Garmin dell'utente.
 
 Questa skill e' un involucro: la procedura non e' duplicata qui.

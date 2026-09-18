@@ -1,4 +1,5 @@
-# Modello per pipeline/curl.txt (quel file e' escluso da git: contiene i tuoi
+# Modello per pipeline/curl_<atleta>.txt (quei file sono esclusi da git:
+# contengono i tuoi
 # cookie di sessione Garmin).
 #
 # Come si ottiene, su connect.garmin.com con la sessione aperta:
@@ -10,7 +11,7 @@
 #   3. scarica UNA attivita' in .fit, trova la richiesta a
 #      download-service/files/activity/<id>
 #      -> Copy as cURL
-#   4. incolla i due comandi in pipeline/curl.txt, in quest'ordine,
+#   4. incolla i due comandi in pipeline/curl_<atleta>.txt, in quest'ordine,
 #      separati da una riga vuota
 #
 # Lo script riscrive da se' i parametri `limit` e `start` del primo comando per

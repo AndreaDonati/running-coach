@@ -79,12 +79,39 @@ Si esportano così, con la sessione Garmin aperta:
 
 Lo script riconosce da solo quale è quale, anche se li incolli al contrario.
 
-Finiscono in `pipeline/curl.txt`, che **contiene le credenziali della tua
-sessione**: è escluso dal controllo di versione e non va passato a nessuno. Il
-formato è in `curl.txt.example`.
+Finiscono in `pipeline/curl_<atleta>.txt`, che **contiene le credenziali della
+tua sessione**: è escluso dal controllo di versione e non va passato a nessuno.
+Il formato è in `curl.txt.example`.
 
 Scadono nel giro di ore. Quando il download si ferma, si riesportano e si
 rilancia: le attività già scaricate vengono saltate.
+
+### Un file per atleta, e un controllo su chi è
+
+I cookie appartengono a un **account Garmin**, non al repository. Con due atleti
+su due account diversi serve un file per ciascuno, altrimenti ogni sync
+sovrascrive la sessione dell'altro — ed è il problema minore. Quello grosso è
+che dal file non si capisce di chi sia la sessione dentro, quindi
+`run_pipeline.py giorgia` con i cookie di Andrea scarica le attività di Andrea
+in `athletes/giorgia/`, e l'unico modo di accorgersene sono le date.
+
+Per questo il downloader legge il cookie `GARMIN-SSO-CUST-GUID`, che identifica
+l'account, e lo confronta con quello registrato in
+`athletes/<atleta>/.garmin_guid`. La prima volta lo registra, dopo lo verifica:
+
+```
+❌ Il cURL e' di un altro account Garmin. Sembra la sessione di 'andrea'.
+   atteso per 'giorgia': 76587ed1-...
+   trovato nel cURL:     5d1ee7dc-...
+```
+
+Se l'account di un atleta cambia davvero, si cancella il suo `.garmin_guid` e si
+rilancia. Se il cURL non contiene quel cookie il controllo viene saltato con un
+avviso: è una verifica in più, non un requisito del formato.
+
+Un `pipeline/curl.txt` preesistente continua a funzionare come ripiego per
+qualunque atleta, finché non esiste il file suo; il primo
+`--curl-from-clipboard` scrive su `curl_<atleta>.txt` e la questione si chiude.
 
 ## Cosa finisce in un riassunto
 

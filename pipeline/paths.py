@@ -55,6 +55,36 @@ def athlete_dir(person: str) -> Path:
     return path
 
 
+LEGACY_CURL = PIPELINE_DIR / "curl.txt"
+
+
+def curl_file(person: str) -> Path:
+    """Cookie di sessione Garmin di un atleta: `pipeline/curl_<atleta>.txt`.
+
+    Uno per atleta, perche' i cookie appartengono a un account Garmin. Con un
+    solo `curl.txt` condiviso ogni sync sovrascriveva la sessione dell'altro
+    atleta, e niente nel file diceva di chi fosse quella dentro: il caso
+    peggiore e' scaricare le attivita' di uno nella cartella dell'altro.
+
+    Se il file per atleta non c'e' ma il vecchio `curl.txt` si', si usa quello:
+    e' la sessione che l'utente ha appena esportato prima di aggiornare la
+    pipeline. Lo si riscrive al primo `--curl-from-clipboard`.
+    """
+    proprio = PIPELINE_DIR / f"curl_{person.strip().lower()}.txt"
+    if not proprio.exists() and LEGACY_CURL.exists():
+        return LEGACY_CURL
+    return proprio
+
+
+def garmin_guid_file(person: str) -> Path:
+    """Dove si ricorda a quale account Garmin appartiene un atleta.
+
+    Contiene il `GARMIN-SSO-CUST-GUID` visto la prima volta. Serve a impedire
+    che una sessione dell'atleta sbagliato scarichi nella cartella di questo.
+    """
+    return athlete_dir(person) / ".garmin_guid"
+
+
 def raw_activities(person: str) -> Path:
     """`.fit` scaricati da Garmin. Input della conversione."""
     return athlete_dir(person) / "raw" / "activities"

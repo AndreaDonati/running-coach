@@ -7,7 +7,7 @@ conti propri: se un numero e' sbagliato, il posto dove guardare e'
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -39,12 +39,6 @@ def pace_str(s_per_km):
     mins = s // 60
     secs = s % 60
     return f"{mins:d}:{secs:02d}/km"
-
-def write_markdown(md_path, summary, splits_km, laps, timeseries=None):
-    """Scrive il riassunto Markdown dell'attivita' nel percorso indicato."""
-    md_path = Path(md_path)
-    md_path.parent.mkdir(parents=True, exist_ok=True)
-
 
 def _metadati(summary):
     """Intestazione e metadati: tipo, data, distanza, calorie."""
@@ -207,7 +201,20 @@ def _tabella_split(splits_km):
     return lines
 
 
-def _tabella_lap(laps, timeseries):
+def _campo_lap(lap, *chiavi):
+    """Primo dei campi presenti nel lap, o None.
+
+    Con `or` a catena uno zero legittimo (un lap da 0 secondi) verrebbe
+    scartato in favore del campo successivo.
+    """
+    for k in chiavi:
+        v = lap.get(k)
+        if v is not None:
+            return v
+    return None
+
+
+def _tabella_lap(laps):
     """Tabella dei lap registrati dall'orologio."""
     lines = []
     # laps table - concise
@@ -230,68 +237,25 @@ def _tabella_lap(laps, timeseries):
                     dist = f"{float(lap.get('distance')):.1f}"
                 except Exception:
                     dist = str(lap.get('distance'))
-            elapsed = format_seconds(lap.get('total_timer_time') or lap.get('total_elapsed_time') or lap.get('elapsed_time'))
-            # compute moving time from timeseries if not present on the lap
-            moving_val = lap.get('total_moving_time') or lap.get('moving_time')
-            moving = None
-            if moving_val is not None:
-                try:
-                    moving = format_seconds(moving_val)
-                except Exception:
-                    moving = None
-            else:
-                # if timeseries provided, compute moving time between lap start and lap end
-                if timeseries:
-                    # determine lap start/end timestamps
-                    lap_start = None
-                    lap_end = None
-                    if lap.get('start_time'):
-                        try:
-                            lap_start = datetime.fromisoformat(lap.get('start_time'))
-                        except Exception:
-                            lap_start = None
-                    if lap.get('timestamp'):
-                        try:
-                            lap_start = datetime.fromisoformat(lap.get('timestamp'))
-                        except Exception:
-                            pass
-                    # estimate end by adding elapsed if available
-                    if lap.get('total_timer_time') is not None and lap_start is not None:
-                        try:
-                            lap_end = lap_start + timedelta(seconds=float(lap.get('total_timer_time')))
-                        except Exception:
-                            lap_end = None
-                    # if we can't compute lap_end, try to use next lap's start if available (handled outside)
-                    if lap_start is not None:
-                        # sum intervals within lap where distance increases
-                        moving_seconds = 0.0
-                        prev = None
-                        for rec in timeseries:
-                            rts = rec.get('ts')
-                            if rts is None:
-                                continue
-                            if lap_end is not None:
-                                if rts < lap_start or rts > lap_end:
-                                    continue
-                            else:
-                                if rts < lap_start:
-                                    continue
-                            if prev is None:
-                                prev = rec
-                                continue
-                            # only count time when distance increases meaningfully
-                            try:
-                                dt = (rec.get('ts') - prev.get('ts')).total_seconds()
-                            except Exception:
-                                dt = 0
-                            dist_prev = prev.get('distance_m') or 0.0
-                            dist_cur = rec.get('distance_m') or 0.0
-                            if (dist_cur - dist_prev) > 0.5:
-                                moving_seconds += max(0.0, dt)
-                            prev = rec
-                        if moving_seconds:
-                            moving = format_seconds(round(moving_seconds))
-            avg_hr = ''
+            # `elapsed` e `moving` vengono entrambi dal .fit, con la stessa
+            # convenzione del riassunto (`fit_reader._summary_field`):
+            # total_elapsed_time e' il tempo a orologio, total_timer_time quello
+            # col cronometro in moto. Quando differiscono l'atleta si e' fermato,
+            # e questa e' l'unica riga della tabella che lo dice.
+            #
+            # Prima: `elapsed` mostrava total_timer_time, quindi le soste non si
+            # vedevano, e `moving` veniva ricalcolato dalla timeseries con una
+            # finestra sbagliata — `lap_start` veniva sovrascritto col campo
+            # `timestamp`, che nel .fit e' la **fine** del lap, e la finestra
+            # finiva sul lap successivo. Risultato: il moving time di ogni lap
+            # era la durata di quello dopo, e l'ultimo stampava "None".
+            # Il .fit non contiene un moving time per lap (total_moving_time e'
+            # assente su tutti), quindi non c'era niente da ricalcolare.
+            elapsed_s = _campo_lap(lap, 'total_elapsed_time', 'elapsed_time')
+            moving_s = _campo_lap(lap, 'total_moving_time', 'moving_time',
+                                  'total_timer_time')
+            elapsed = format_seconds(elapsed_s) or ''
+            moving = format_seconds(moving_s) or ''
             avg_hr = ''
             if lap.get('avg_heart_rate') is not None:
                 avg_hr = f"{lap.get('avg_heart_rate'):.1f}"
@@ -301,7 +265,7 @@ def _tabella_lap(laps, timeseries):
             # avg pace from timer time / distance
             pace = ''
             try:
-                timer_t = lap.get('total_timer_time') or lap.get('total_elapsed_time')
+                timer_t = moving_s if moving_s is not None else elapsed_s
                 lap_d = lap.get('total_distance') or lap.get('distance')
                 if timer_t is not None and lap_d is not None and float(lap_d) > 0:
                     pace = format_seconds(round(float(timer_t) * 1000.0 / float(lap_d))) or ''
@@ -314,7 +278,7 @@ def _tabella_lap(laps, timeseries):
     return lines
 
 
-def write_markdown(md_path, summary, splits_km, laps, timeseries=None):
+def write_markdown(md_path, summary, splits_km, laps):
     """Scrive il riassunto Markdown dell'attivita' nel percorso indicato.
 
     Quattro sezioni indipendenti, ciascuna che restituisce le proprie righe.
@@ -327,5 +291,5 @@ def write_markdown(md_path, summary, splits_km, laps, timeseries=None):
     lines = (_metadati(summary)
              + _riassunto(summary)
              + _tabella_split(splits_km)
-             + _tabella_lap(laps, timeseries))
+             + _tabella_lap(laps))
     md_path.write_text("\n".join(lines), encoding="utf-8")

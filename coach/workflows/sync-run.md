@@ -11,9 +11,15 @@ settimana attiva.
 
 ### 1. Capire se servono cookie nuovi
 
-Guarda la data di `pipeline/curl.txt`. I cookie Garmin durano poche ore: se il
-file ha piu' di ~6 ore, vanno riesportati. Se non esiste, vanno esportati e
-basta.
+Guarda la data di `pipeline/curl_<atleta>.txt` — **uno per atleta**, perche' i
+cookie appartengono a un account Garmin. I cookie durano poche ore: se il file
+ha piu' di ~6 ore, vanno riesportati. Se non esiste, vanno esportati e basta.
+
+Se l'atleta non e' quello del sync precedente, i cookie sono quasi certamente
+da riesportare: sono di un'altra persona. La sessione va aperta **sull'account
+di quell'atleta** (una finestra in incognito evita di buttare fuori l'altro).
+Il downloader se ne accorge da solo e si ferma prima di scaricare, confrontando
+il cookie `GARMIN-SSO-CUST-GUID` con `athletes/<atleta>/.garmin_guid`.
 
 Quando servono, chiedili all'utente con queste istruzioni testuali:
 
@@ -29,8 +35,8 @@ Quando servono, chiedili all'utente con queste istruzioni testuali:
 Non serve che l'utente li incolli in chat: restano negli appunti. Se li incolla
 lo stesso, salvali in un file e usa `--curl-file`.
 
-**Non stampare mai il contenuto di `curl.txt` nella conversazione**: contiene i
-cookie di sessione dell'account Garmin.
+**Non stampare mai il contenuto di `curl_<atleta>.txt` nella conversazione**:
+contiene i cookie di sessione dell'account Garmin.
 
 ### 2. Sincronizzare
 
@@ -58,6 +64,11 @@ Codici di uscita: `0` fatto, `2` nessuna attivita' nuova (non e' un errore),
 - **"session expired" / uscita 1 sul download** — i cookie sono scaduti: torna
   al punto 1 e richiedili. Le attivita' gia' scaricate non si riscaricano,
   quindi riprovare non fa danni.
+- **"Il cURL e' di un altro account Garmin"** — i cookie sono di un altro
+  atleta. Non e' un errore della pipeline: e' la guardia che ha impedito di
+  scaricare le attivita' di uno nella cartella di un altro. Richiedi i cURL
+  con la sessione dell'atleta giusto aperta. Solo se l'account di quell'atleta
+  e' cambiato per davvero si cancella il suo `.garmin_guid`.
 - **Errori di conversione su alcuni file** — riporta quali e vai avanti con gli
   altri. Un `.fit` troncato non blocca il resto. Il log sta in
   `pipeline/logs/<atleta>-convert.log`.
@@ -72,9 +83,11 @@ sono stati marcati fatti, e se qualcosa nel piano e' cambiato di conseguenza.
 
 ## Regole
 
-- Non chiedere i cookie se `curl.txt` e' recente: prova prima, chiedi se
-  fallisce.
+- Non chiedere i cookie se `curl_<atleta>.txt` e' recente: prova prima, chiedi
+  se fallisce.
 - Non lanciare `--recreate`: ricostruisce centinaia di file per niente. Serve
   solo dopo una modifica al converter.
 - Se l'utente chiede di registrare un allenamento e i `.fit` sono gia' sul
-  disco, usa `--no-download` e salti tutta la parte dei cookie.
+  disco, lancia **senza** `--download`: converte quello che c'e' e salti tutta
+  la parte dei cookie. (`--no-download` non esiste: era un errore di questo
+  documento.)

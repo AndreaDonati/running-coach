@@ -461,7 +461,7 @@ def settimana(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     monkeypatch.setattr(paths, "ATHLETES_DIR", tmp_path / "athletes")
     # senza attivita' convertite il confronto col carico reale si salta
-    monkeypatch.setattr(week_check, "carico_recente", lambda p: None)
+    monkeypatch.setattr(week_check, "carico_recente", lambda p, s=None: None)
 
     def scrivi(testo, nome="week_2026-09-07.md"):
         f = root / nome
@@ -539,11 +539,188 @@ def test_volume_fuori_scala_rispetto_al_carico_reale(tmp_path, monkeypatch):
     root = tmp_path / "athletes" / "tizio" / "plans" / "weeks"
     root.mkdir(parents=True)
     monkeypatch.setattr(paths, "ATHLETES_DIR", tmp_path / "athletes")
-    monkeypatch.setattr(week_check, "carico_recente", lambda p: 25.0)   # 25 km/sett
+    monkeypatch.setattr(week_check, "carico_recente", lambda p, s=None: 25.0)   # 25 km/sett
     f = root / "week_2026-09-07.md"
     f.write_text(SETTIMANA_OK)                                          # piano da 55 km
     problemi, _ = week_check.check("tizio", f)
     assert any("mediana recente" in p for p in problemi)
+
+
+def test_carico_recente_esclude_la_settimana_in_corso(monkeypatch):
+    """La settimana del piano non entra nel proprio metro di paragone.
+
+    Contiene solo i giorni gia' corsi: di lunedi' vale quasi zero e abbassa la
+    mediana quanto basta a far sembrare fuori scala un piano normale.
+    """
+    from datetime import date, datetime, timedelta
+
+    import profile_stats
+    import week_check
+
+    lunedi = date(2026, 9, 14)
+    # cinque settimane chiuse piu' i 5 km gia' corsi il lunedi' del piano
+    chiuse = [52.9, 40.5, 28.4, 28.3, 48.2]                 # dalla piu' vecchia
+    attivita = [
+        {"date": datetime.combine(lunedi - timedelta(weeks=5 - n), datetime.min.time()),
+         "distance_km": km}
+        for n, km in enumerate(chiuse)
+    ]
+    attivita.append({"date": datetime.combine(lunedi, datetime.min.time()),
+                     "distance_km": 5.0})
+    monkeypatch.setattr(profile_stats, "load", lambda p: attivita)
+
+    assert week_check.carico_recente("tizio", lunedi) == 40.5
+    # col parziale dentro la mediana scende a 34.45: su un piano da 54 km il
+    # rapporto passa da 1.33 (avviso) a 1.57 (bloccante) senza che il carico
+    # dell'atleta sia cambiato di un metro.
+    assert week_check.carico_recente("tizio", lunedi + timedelta(weeks=1)) == 34.45
+
+
+# --- cookie Garmin: uno per atleta, legato al suo account ------------------
+
+@pytest.fixture
+def due_atleti(tmp_path, monkeypatch):
+    """Due atleti con cartelle vere, e la pipeline dir spostata in tmp."""
+    import paths
+    for nome in ("uno", "due"):
+        (tmp_path / "athletes" / nome).mkdir(parents=True)
+    monkeypatch.setattr(paths, "ATHLETES_DIR", tmp_path / "athletes")
+    monkeypatch.setattr(paths, "PIPELINE_DIR", tmp_path / "pipeline")
+    monkeypatch.setattr(paths, "LEGACY_CURL", tmp_path / "pipeline" / "curl.txt")
+    (tmp_path / "pipeline").mkdir()
+    return paths
+
+
+def test_curl_e_uno_per_atleta(due_atleti):
+    """Due atleti, due file: un file solo sovrascriveva la sessione dell'altro."""
+    a = due_atleti.curl_file("uno")
+    b = due_atleti.curl_file("due")
+    assert a != b
+    assert a.name == "curl_uno.txt" and b.name == "curl_due.txt"
+
+
+def test_curl_ricade_sul_vecchio_file_condiviso(due_atleti):
+    """Chi aggiorna la pipeline con un curl.txt appena esportato non lo perde."""
+    legacy = due_atleti.LEGACY_CURL
+    legacy.write_text("curl ...")
+    assert due_atleti.curl_file("uno") == legacy
+    # ma appena esiste quello dell'atleta, vince il suo
+    due_atleti.curl_file("uno").parent.joinpath("curl_uno.txt").write_text("curl ...")
+    assert due_atleti.curl_file("uno").name == "curl_uno.txt"
+
+
+def _curl_con_guid(guid):
+    return (f"curl --url 'https://connect.garmin.com/gc-api/activitylist-service/x' "
+            f"-b 'GARMIN-SSO=1; GARMIN-SSO-CUST-GUID={guid}; session=abc'")
+
+
+def test_guardia_blocca_la_sessione_dell_atleta_sbagliato(due_atleti, capsys):
+    """Il caso peggiore: scaricare le attivita' di uno nella cartella dell'altro.
+
+    Il cookie GARMIN-SSO-CUST-GUID identifica l'account. Con un curl.txt
+    condiviso niente diceva di chi fosse la sessione dentro, e l'unico modo di
+    accorgersi dello scambio erano le date delle attivita'.
+    """
+    import sys
+    sys.path.insert(0, str(PIPELINE))
+    import download_garmin
+
+    G1 = "5d1ee7dc-6002-4319-9fdd-d72f6acced5c"
+    G2 = "76587ed1-1873-4d4f-8960-c1d50e4d9544"
+
+    # primo uso: l'account viene registrato
+    download_garmin.check_account("uno", _curl_con_guid(G1))
+    assert due_atleti.garmin_guid_file("uno").read_text().strip() == G1
+    # stessa sessione, nessun problema
+    download_garmin.check_account("uno", _curl_con_guid(G1))
+
+    # sessione dell'altro account: deve fermarsi
+    download_garmin.check_account("due", _curl_con_guid(G2))
+    with pytest.raises(SystemExit) as e:
+        download_garmin.check_account("due", _curl_con_guid(G1))
+    msg = str(e.value)
+    assert "altro account" in msg
+    assert "'uno'" in msg, "il messaggio deve dire di chi e' la sessione trovata"
+
+
+def test_guardia_non_blocca_se_il_cookie_manca(due_atleti):
+    """Il controllo e' un extra: un cURL senza quel cookie non viene rifiutato."""
+    import sys
+    sys.path.insert(0, str(PIPELINE))
+    import download_garmin
+    download_garmin.check_account("uno", "curl --url 'https://x' -b 'session=abc'")
+    assert not due_atleti.garmin_guid_file("uno").exists()
+
+
+def test_i_cookie_non_finiscono_in_git():
+    """`curl_<atleta>.txt` e `.garmin_guid` devono essere ignorati da git."""
+    import subprocess
+    for rel in ("pipeline/curl_pinco.txt", "athletes/pinco/.garmin_guid"):
+        res = subprocess.run(["git", "check-ignore", rel],
+                             cwd=PIPELINE.parent, capture_output=True, text=True)
+        assert res.returncode == 0, f"{rel} NON e' in .gitignore"
+
+
+def _righe_lap(md_text):
+    """Le righe dati della tabella 'Recorded laps'."""
+    fuori = md_text.split("**Recorded laps (concise):**")[1].strip().split("\n")
+    return [r for r in fuori if r.startswith("|") and not r.startswith("|start")
+            and not r.startswith("|--")]
+
+
+def test_tabella_lap_distingue_elapsed_da_moving():
+    """`elapsed` e' il tempo a orologio, `moving` quello col cronometro in moto.
+
+    Il converter mostrava total_timer_time nella colonna 'elapsed', quindi una
+    sosta era invisibile, e ricalcolava il moving time dalla timeseries con una
+    finestra spostata di un lap: ogni lap riportava la durata del successivo e
+    l'ultimo stampava la stringa "None". Su un'attivita' reale (test soglia del
+    15/09/2026) questo ha prodotto una diagnosi falsa — una sosta di 3 minuti
+    che non c'era.
+    """
+    import sys
+    sys.path.insert(0, str(PIPELINE))
+    from activity_markdown import _tabella_lap
+
+    laps = [
+        # lap con sosta: 8:15 a orologio, 6:12 di cronometro
+        {"start_time": "2026-09-15T16:46:48", "total_distance": 1000.0,
+         "total_elapsed_time": 495.1, "total_timer_time": 372.478,
+         "avg_heart_rate": 135, "max_heart_rate": 147},
+        # lap continuo
+        {"start_time": "2026-09-15T16:56:41", "total_distance": 1000.0,
+         "total_elapsed_time": 273.701, "total_timer_time": 273.701,
+         "avg_heart_rate": 166, "max_heart_rate": 175},
+    ]
+    righe = _righe_lap("**Recorded laps (concise):**\n" + "\n".join(_tabella_lap(laps)[1:]))
+    assert len(righe) == 2
+
+    primo = righe[0].split("|")[1:-1]      # start, dist, elapsed, moving, pace, ...
+    assert primo[2] == "8:15", f"elapsed deve venire da total_elapsed_time: {primo[2]}"
+    assert primo[3] == "6:12", f"moving deve venire da total_timer_time: {primo[3]}"
+    assert primo[4] == "6:12", "il passo si calcola sul tempo in moto"
+
+    secondo = righe[1].split("|")[1:-1]
+    assert secondo[2] == secondo[3] == "4:34", "senza soste i due tempi coincidono"
+
+    # nessuna cella deve contenere la stringa "None"
+    for r in righe:
+        assert "None" not in r, r
+
+
+def test_lap_elapsed_non_e_mai_sotto_il_moving(converted):
+    """Su un'attivita' reale: tempo a orologio >= tempo col cronometro, sempre."""
+    _, md_text, _ = converted
+    for r in _righe_lap(md_text):
+        celle = r.split("|")[1:-1]
+        el, mv = celle[2], celle[3]
+        assert "None" not in (el, mv), r
+        if el and mv:
+            def sec(s):
+                parti = [int(x) for x in s.split(":")]
+                return parti[0] * 60 + parti[1] if len(parti) == 2 else \
+                    parti[0] * 3600 + parti[1] * 60 + parti[2]
+            assert sec(el) >= sec(mv), r
 
 
 def test_il_markdown_e_il_prodotto(tmp_path):

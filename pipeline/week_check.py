@@ -111,11 +111,17 @@ def km_dalla_cella(cella: str) -> float:
     return (basso + alto) / 2
 
 
-def carico_recente(person: str) -> float | None:
-    """Mediana dei km settimanali delle ultime 6 settimane con attivita'.
+def carico_recente(person: str, settimana: date | None = None) -> float | None:
+    """Mediana dei km delle ultime 6 settimane concluse prima di `settimana`.
 
     La mediana e non la media: una settimana di gara o una di stop sposterebbero
     la media abbastanza da far passare per normale un piano fuori scala.
+
+    `settimana` e' il lunedi' del piano in esame, e va esclusa dal confronto
+    insieme a tutto cio' che viene dopo: quella in corso contiene solo i giorni
+    gia' corsi, quindi abbassa la mediana tanto piu' quanto piu' presto nella
+    settimana si lancia il controllo, e di lunedi' la falsa quasi al massimo.
+    Senza argomento si usa la settimana di oggi.
     """
     try:
         attivita = profile_stats.load(person)
@@ -125,7 +131,11 @@ def carico_recente(person: str) -> float | None:
         return None
     import weekly_rollup
     settimane = weekly_rollup.raggruppa(attivita)
-    ultime = [settimane[k]["km"] for k in sorted(settimane)[-6:]]
+    if settimana is None:
+        oggi = date.today()
+        settimana = oggi - timedelta(days=oggi.weekday())
+    chiuse = [k for k in sorted(settimane) if k < settimana]
+    ultime = [settimane[k]["km"] for k in chiuse[-6:]]
     return statistics.median(ultime) if len(ultime) >= 3 else None
 
 
@@ -221,7 +231,7 @@ def check(person: str, percorso: Path) -> tuple[list[str], list[str]]:
             elif scarto > 0.10:
                 avvisi.append(messaggio)
 
-        recente = carico_recente(person)
+        recente = carico_recente(person, lunedi)
         if recente and recente > 0:
             rapporto = previsto / recente
             if rapporto > 1.5:

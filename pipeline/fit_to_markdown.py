@@ -181,7 +181,7 @@ def convert(in_path, md_path, json_path=None, prefer_fit=False,
     # Prima stava in un `try/except: pass`, e un errore qui usciva dallo
     # script come successo lasciando a chi chiamava il compito di
     # accorgersi del file mancante.
-    write_markdown(md_path, summary, splits_km, laps, timeseries_raw)
+    write_markdown(md_path, summary, splits_km, laps)
 
     if json_path:
         out = {"file": in_path, "summary": summary,
