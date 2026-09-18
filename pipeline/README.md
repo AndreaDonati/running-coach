@@ -182,6 +182,34 @@ Le soglie delle zone stanno in `profile_stats.py`, costante `ZONE`: Z1 <72%,
 Z2 72-82%, Z3 82-87%, Z4 87-92%, Z5 >92% della frequenza massima. È una
 convenzione fra le tante, scritta lì perché sia una scelta modificabile.
 
+### Da dove viene la frequenza massima
+
+```bash
+pipeline/.venv/bin/python pipeline/hr_estimate.py andrea
+```
+
+Le zone sono percentuali: diventano battiti solo applicandole a una frequenza
+massima, che nel profilo è scritta a mano. `hr_estimate.py` ricava dai `.fit`
+gli ancoraggi che si possono misurare — massima osservata (grezza e al netto
+del cadence lock), frequenza a riposo, medie più alte tenute su 10/20/30/60
+minuti, e da queste una stima della frequenza alla soglia — e stampa le tre
+scale di zone che ne derivano: percentuale della massima, della riserva
+cardiaca, della soglia.
+
+Le tre non coincidono: sullo stesso atleta il confine fra fondo e medio può
+spostarsi di dieci battiti. È il motivo per cui le zone del piano e quelle
+dell'orologio quasi mai combaciano — non per la frequenza massima, per il
+metodo. Se in `raw/garmin_list/activities.json` ci sono i minuti per zona, lo
+script ricostruisce per inversione anche i confini che Garmin sta usando e le
+date in cui sono cambiati (l'Instinct auto-rileva la frequenza massima: le sue
+zone si spostano da sole).
+
+Non scrive niente. La stima della soglia è la miglior mezz'ora presente in
+archivio, e vale solo se in quella seduta c'è stato davvero uno sforzo
+massimale: per questo ogni numero è stampato con la seduta da cui viene, e
+decide una persona. La prima esecuzione apre tutti i `.fit` ed è lenta, le
+successive leggono la cache in `pipeline/logs/`.
+
 ### Il dislivello
 
 Il totale dell'attività e quello dei singoli lap li dichiara l'orologio, che li
@@ -213,6 +241,7 @@ mano.
 | `quarter_split.py` | Raggruppa per trimestre, rigenera manifest e summary |
 | `weekly_rollup.py` | Il quadro settimana per settimana |
 | `profile_stats.py` | La fotografia di un atleta: volumi, sport, estremi |
+| `hr_estimate.py` | Gli ancoraggi delle zone: massima, riposo, soglia, e le tre scale a confronto |
 | `profile_check.py` | Verifica che il profilo abbia i campi che servono |
 | `week_check.py` | Verifica che un piano settimanale non sia rotto |
 | `tests/` | I test |

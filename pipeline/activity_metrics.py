@@ -9,6 +9,7 @@ stati calcoli sbagliati che nessuno vedeva.
 from __future__ import annotations
 
 import math
+from collections import deque
 from statistics import mean
 
 from fit_reader import safe_val  # noqa: F401  (usato da compute_splits)
@@ -227,6 +228,182 @@ def compute_hr_bands(timeseries):
         return None
     return {f"{b}-{a}" if a < 999 else f"{b}+": round(sec)
             for (b, a), sec in zip(HR_BANDE, secondi)}
+
+
+# --- frequenza cardiaca sostenuta -------------------------------------------
+#
+# Tre numeri che le bande da 10 bpm non possono dare, perche' buttano via
+# l'ordine temporale: la media piu' alta tenuta per venti o trenta minuti (da
+# cui si stima la soglia), la FC massima non contaminata dal cadence lock, e la
+# distribuzione a 1 bpm. Li usa `hr_estimate.py`.
+
+FINESTRE_SOSTENUTE_S = (600, 1200, 1800, 3600)
+
+
+def _serie_1hz(timeseries, chiavi=("heart_rate",)):
+    """Ricampiona a 1 Hz e spezza la serie dove il segnale si interrompe.
+
+    Restituisce una lista di blocchi contigui; ogni blocco e' una lista di
+    tuple, un campione al secondo, coi valori delle `chiavi` richieste.
+
+    Serve perche' il campionamento nei `.fit` non e' uniforme: 1 Hz
+    sull'Instinct, 1-8 secondi in modalita' smart, con buchi dove l'attivita'
+    e' in pausa. Una media mobile contata sui campioni misurerebbe durate
+    diverse a parita' di finestra, e una finestra da trenta minuti finirebbe
+    per scavalcare una sosta di mezz'ora come se non ci fosse.
+
+    Il valore viene tenuto fino al campione successivo (interpolazione a
+    gradino): fra due battiti registrati non c'e' altra informazione.
+    """
+    campioni = []
+    for t in (timeseries or []):
+        ts = t.get("ts")
+        if ts is None or t.get(chiavi[0]) is None:
+            continue
+        campioni.append((ts, tuple(t.get(k) for k in chiavi)))
+    if len(campioni) < 2:
+        return []
+    campioni.sort(key=lambda x: x[0])
+
+    blocchi, corrente = [], []
+    for (t0, v0), (t1, _) in zip(campioni, campioni[1:]):
+        dt = (t1 - t0).total_seconds()
+        if dt <= 0 or dt > MAX_DELTA_S:
+            if corrente:
+                corrente.append(v0)     # l'ultimo campione prima del buco
+                blocchi.append(corrente)
+            corrente = []
+            continue
+        corrente.extend([v0] * max(1, int(round(dt))))
+    if corrente:
+        # Senza quest'ultimo, una traccia di trenta minuti netti ne misurerebbe
+        # 29:59 e la finestra da trenta minuti non esisterebbe mai.
+        corrente.append(campioni[-1][1])
+        blocchi.append(corrente)
+    return blocchi
+
+
+def massimi_sostenuti(timeseries, finestre_s=FINESTRE_SOSTENUTE_S):
+    """Media FC piu' alta tenuta su ciascuna finestra, in bpm.
+
+    La media di uno sforzo massimale di 20-30 minuti e' il modo standard di
+    stimare la frequenza alla soglia senza un test di laboratorio.
+
+    Attenzione a cosa e' questo numero: la finestra scorre su tutta la traccia,
+    quindi il risultato e' il *miglior tratto presente*, non il risultato di un
+    test. Vale come stima della soglia solo se in quella seduta c'e' davvero
+    stato uno sforzo massimale di quella durata — un lungo facile produce un
+    numero comunque, ed e' solo la parte piu' dura del lungo. Per questo
+    `hr_estimate.py` stampa sempre da quale attivita' viene il valore.
+    """
+    blocchi = _serie_1hz(timeseries)
+    out = {}
+    for w in finestre_s:
+        migliore = None
+        for b in blocchi:
+            if len(b) < w:
+                continue
+            somma = sum(v[0] for v in b[:w])
+            migliore = somma if migliore is None else max(migliore, somma)
+            for i in range(w, len(b)):
+                somma += b[i][0] - b[i - w][0]
+                if somma > migliore:
+                    migliore = somma
+        out[w] = round(migliore / w, 1) if migliore is not None else None
+    return out
+
+
+# Distanza minima fra battito e passi al minuto perche' un campione sia
+# utilizzabile, e durata minima perche' un valore conti come "tenuto".
+CADENZA_GAP_MIN = 25
+FCMAX_DURATA_MIN_S = 30
+
+
+def _spm(cadenza):
+    """Passi al minuto. La cadenza FIT e' per gamba: sotto 120 va raddoppiata."""
+    if cadenza is None:
+        return None
+    return cadenza * 2 if cadenza < 120 else cadenza
+
+
+def fcmax_pulita(timeseries, gap_min=CADENZA_GAP_MIN, durata_s=FCMAX_DURATA_MIN_S):
+    """FC massima tenuta `durata_s` con i passi al minuto lontani dal battito.
+
+    Un sensore ottico in *cadence lock* scrive la cadenza al posto della
+    frequenza: il picco che ne esce e' l'andatura, non il cuore. Questo non e'
+    un rilevatore di cadence lock — sul perche' non ce ne sia uno, vedi la nota
+    in `profile_stats.py` — ma un filtro conservativo: scarta i campioni in cui
+    la confusione sarebbe indistinguibile, cioe' quelli in cui FC e passi
+    coincidono, e anche quelli senza cadenza, dove non si puo' escludere niente.
+
+    Quello che resta e' una FC massima che il lock non puo' aver prodotto. E'
+    piu' bassa della massima grezza per costruzione: la differenza fra le due
+    e' l'informazione utile. Pochi battiti di scarto vogliono dire che il picco
+    grezzo regge; trenta vogliono dire che il picco viene da un tratto veloce
+    in cui il sensore potrebbe aver seguito i piedi.
+
+    La durata minima esclude il campione isolato: un battito a 210 per un
+    secondo e' un artefatto, trenta secondi sopra 195 sono uno sforzo.
+    """
+    migliore = None
+    for blocco in _serie_1hz(timeseries, ("heart_rate", "cadence")):
+        validi = [hr if (_spm(cad) is not None and hr - _spm(cad) >= gap_min) else None
+                  for hr, cad in blocco]
+        # Massimo, fra tutte le finestre di `durata_s` secondi contigui e
+        # validi, del minimo della finestra: e' la definizione di "tenuto".
+        serie = []
+        for v in validi + [None]:
+            if v is not None:
+                serie.append(v)
+                continue
+            if len(serie) >= durata_s:
+                coda = deque()
+                for i, x in enumerate(serie):
+                    while coda and serie[coda[-1]] >= x:
+                        coda.pop()
+                    coda.append(i)
+                    if coda[0] <= i - durata_s:
+                        coda.popleft()
+                    if i >= durata_s - 1:
+                        m = serie[coda[0]]
+                        if migliore is None or m > migliore:
+                            migliore = m
+            serie = []
+    return migliore
+
+
+def istogramma_hr(timeseries):
+    """Secondi passati a ciascun bpm. Come `compute_hr_bands` ma a 1 bpm.
+
+    La risoluzione fine serve a `confine_da_tempo_sopra`: con bande da 10 bpm
+    un confine di zona si localizzerebbe a +/- 5 battiti, che e' piu' dello
+    scarto che si sta cercando di misurare.
+    """
+    out = {}
+    for blocco in _serie_1hz(timeseries):
+        for (hr,) in blocco:
+            out[hr] = out.get(hr, 0) + 1
+    return out
+
+
+def confine_da_tempo_sopra(istogramma, secondi, hr_min=60, hr_max=230):
+    """Il bpm sopra il quale si e' passato `secondi` in questa attivita'.
+
+    Serve a ricavare i confini di zona di un servizio che pubblica i minuti per
+    zona ma non i valori che li separano — Garmin Connect, per esempio: il
+    confine e' il battito che riproduce quel tempo. Su una sola attivita' la
+    risposta e' rumorosa; su cento attivita' il valore vero e' la moda.
+
+    Restituisce `(bpm, scarto_in_secondi)`, o None se l'istogramma e' vuoto.
+    """
+    if not istogramma or secondi is None:
+        return None
+    sopra, cumulato = {}, 0
+    for v in range(hr_max, hr_min - 1, -1):
+        cumulato += istogramma.get(v, 0)
+        sopra[v] = cumulato
+    migliore = min(sopra, key=lambda b: (abs(sopra[b] - secondi), b))
+    return migliore, abs(sopra[migliore] - secondi)
 
 # Dislivello massimo, in metri per chilometro, entro cui il decoupling e'
 # interpretabile. Vedi la nota nella funzione: sopra, il numero misura il

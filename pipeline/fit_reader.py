@@ -167,6 +167,42 @@ def extract_laps(fitfile):
         laps.append(lap)
     return laps
 
+def extract_hr_settings(fitfile):
+    """Cosa l'orologio pensa del cuore di chi lo porta, al momento dell'attivita'.
+
+    Garmin scrive in ogni `.fit` una copia delle proprie impostazioni: la FC a
+    riposo che ha misurato, la FC massima e la soglia con cui calcola le zone,
+    e il metodo (percentuale della massima, della riserva, o della soglia).
+
+    Vale la pena leggerlo per due motivi. La FC a riposo e' un dato che
+    altrimenti andrebbe chiesto a mano, e l'orologio la misura tutte le notti.
+    La FC massima, invece, sull'Instinct e' **auto-rilevata**: cambia da sola
+    quando il dispositivo vede uno sforzo piu' duro, e con lei si spostano le
+    zone dell'orologio senza che nessuno abbia toccato niente. Se il piano e
+    l'orologio danno numeri diversi, spesso e' questo.
+
+    Tutti i campi possono mancare, ed essere `0` significa "non impostato".
+    """
+    out = {"resting_hr": None, "fcmax_dispositivo": None,
+           "soglia_dispositivo": None, "metodo_zone": None}
+    for msg in fitfile.get_messages():
+        nome = msg.name.lower()
+        if nome == "user_profile":
+            v = msg.get_value("resting_heart_rate")
+            if v:
+                out["resting_hr"] = v
+        elif nome == "zones_target":
+            for chiave, campo in (("fcmax_dispositivo", "max_heart_rate"),
+                                  ("soglia_dispositivo", "threshold_heart_rate")):
+                v = msg.get_value(campo)
+                if v:
+                    out[chiave] = v
+            v = msg.get_value("hr_calc_type")
+            if v:
+                out["metodo_zone"] = safe_val(v)
+    return out
+
+
 def prepare_input_path(path):
     """If `path` is a ZIP or GZIP container, extract the first .fit file
     and return the path to a temporary extracted file along with a cleanup flag.

@@ -77,6 +77,7 @@ spiega cosa fai invece — non inventare e non fingere che non serva.
 | Passo su terreno vario | Corretto per la pendenza quando c'e' la quota | Usa il **passo equivalente in piano** per confrontare un lungo in montagna con una seduta su strada; il passo reale per prescrivere sul campo |
 | Potenza di corsa | Presente su alcuni orologi, non tutti | Dove c'e', e' il riferimento di intensita' migliore in salita; dove manca, passo e FC |
 | Distribuzione per zona | Calcolata solo se il profilo dichiara la **FC massima** | Quando c'e', in `weekly.md`: dice se la settimana e' stata polarizzata o tutta in mezzo. Quando manca, chiedila all'atleta invece di stimarla |
+| Ancoraggi delle zone (FC massima, a riposo, soglia) | Misurabili dai `.fit`, non prodotti dalla pipeline | `pipeline/hr_estimate.py <atleta>` li stima e mette a confronto le tre scale. Usalo quando le zone del piano e quelle dell'orologio non coincidono: quasi sempre la FC massima e' la stessa e a cambiare e' il metodo |
 
 ## 4. Tipi di richiesta
 
